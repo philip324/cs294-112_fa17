@@ -17,7 +17,6 @@ import argparse
 import matplotlib.pyplot as plt
 
 
-all_rollouts = [1,5,10,15,20,25,30,35,40,45,50]
 network_size = 150
 batch_size = 100
 starter_lr = 1e-3
@@ -35,7 +34,7 @@ def load_data(filename):
 
 def randomize_data(data, labels):
     import random
-    index = list(range(len(data)))
+    index = list(range(data.shape[0]))
     random.shuffle(index)
     data = data[index]
     labels = labels[index]
@@ -60,7 +59,6 @@ def main():
     filename = "rollout_data/" + str(args.envname) + "_" + str(args.num_rollouts) + ".pkl"
     data, labels = load_data(filename)
     # build the model
-    num_data = data.shape[0]
     input_size, output_size = data.shape[1], labels.shape[1]
     x = tf.placeholder(tf.float32, [None, input_size])
     y = tf.placeholder(tf.float32, [None, output_size])
@@ -72,12 +70,11 @@ def main():
     lr = tf.train.exponential_decay(starter_lr, global_step, 100000, 0.96, staircase=True)
     train_step = tf.train.AdamOptimizer(lr).minimize(loss)
 
-    def training(train_data, train_labels, epoch=100, new_session=None):
-        if new_session is None:
+    def training(train_data, train_labels, epoch=100, sess=None):
+        if sess is None:
             sess = tf.Session()
             sess.run(tf.global_variables_initializer())
-        else:
-            sess = new_session
+        num_data = train_data.shape[0]
         losses = []
         for _ in range(epoch):
             # randomize data at the beginning of each epoch
@@ -94,7 +91,7 @@ def main():
             losses.append(train_loss)
         return sess, losses
 
-    def run_rollouts(sess, rollouts):
+    def run_rollouts(sess, rollouts, expert=False):
         with tf.Session():
             tf_util.initialize()
 
@@ -106,17 +103,21 @@ def main():
             observations = []
             actions = []
             for i in range(rollouts):
-                if i % 10 == 0: print('iter', i)
+                if i % 5 == 0: print('rollouts', i)
                 obs = env.reset()
                 done = False
                 totalr = 0.
                 steps = 0
                 while not done:
                     action = policy_fn(obs[None,:])
-                    bc_action = sess.run(y_hat, feed_dict={x: obs[None,:]})
                     observations.append(obs)
-                    actions.append(bc_action)
-                    obs, r, done, _ = env.step(bc_action)
+                    if expert:
+                        actions.append(action)
+                        obs, r, done, _ = env.step(action)
+                    else:
+                        bc_action = sess.run(y_hat, feed_dict={x: obs[None,:]})
+                        actions.append(bc_action)   # change
+                        obs, r, done, _ = env.step(bc_action)
                     totalr += r
                     steps += 1
                     if args.render:
@@ -134,56 +135,54 @@ def main():
                            'actions': np.array(actions)}
             # with open("rollout_data/{}_{}.pkl".format(args.envname, args.num_rollouts), "wb") as output_file:
             #     pickle.dump(expert_data, output_file)
-            return returns
+            return returns, expert_data
 
-    #####################
-    ###  Section 3.1  ###
-    #####################
-    sess, losses = training(data, labels)
-    means, stds = [], []
-    for r in all_rollouts:
-        print("{} starts.".format(r))
-        returns = run_rollouts(sess, r)
-        mean, std = np.mean(returns), np.std(returns)
-        means.append(mean)
-        stds.append(std)
+    iterations = 10
+    rollouts = 20
+    epochs = 5
+    old_data, old_labels = data.copy(), labels.copy()
 
-    print(np.mean(means))
-    print(np.mean(stds))
+    # DAgger policy
+    print("DAgger policy")
+    sess = tf.Session()
+    sess.run(tf.global_variables_initializer())
+    dagger_means, dagger_stds = [], []
+    for i in range(iterations):
+        print("iter",i)
+        sess, losses = training(data, labels, epoch=epochs, sess=sess)
+        returns, policy_data = run_rollouts(sess, rollouts)
+        dagger_means.append(np.mean(returns))
+        dagger_stds.append(np.std(returns))
+        new_data = policy_data["observations"]
+        new_labels = policy_data["actions"]
+        new_labels = new_labels.reshape((new_labels.shape[0], new_labels.shape[2]))
+        data = np.vstack((data, new_data))
+        labels = np.vstack((labels, new_labels))
 
-    #####################
-    ###  Section 3.2  ###
-    #####################
-    # means, stds, old_e = [], [], 1
-    # sess, losses = training(data, labels, epoch=1)
-    # returns = run_rollouts(sess, 20)
-    # mean, std = np.mean(returns), np.std(returns)
-    # means.append(mean)
-    # stds.append(std)
-    # for e in all_rollouts[1:]:
-    #     sess, losses = training(data, labels, epoch=(e-old_e), new_session=sess)
-    #     returns = run_rollouts(sess, 20)
-    #     mean, std = np.mean(returns), np.std(returns)
-    #     means.append(mean)
-    #     stds.append(std)
-    #     old_e = e
+
+    # behaviorial cloning policy
+    print("behaviorial cloning policy")
+    sess.run(tf.global_variables_initializer())
+    sess, losses = training(old_data, old_labels)
+    bc_agent_means, bc_agent_stds = [], []
+    for i in range(iterations):
+        print("iter",i)
+        returns, _ = run_rollouts(sess, rollouts)
+        bc_agent_means.append(np.mean(returns))
+        bc_agent_stds.append(np.std(returns))
 
 
     ### plot reward ###
-    # plt.plot(all_rollouts, 4150*np.ones(len(all_rollouts)), color="red")
-    plt.errorbar(all_rollouts, means, yerr=stds, fmt='-o', color="blue")
+    t = np.r_[:iterations]
+    Ant = 4800
+    expert_plot, = plt.plot(t, Ant*np.ones(iterations), color="red", label="expert")
+    bc_plot = plt.errorbar(t, bc_agent_means, yerr=bc_agent_stds, fmt='-o', color="blue", label="bc")
+    dagger_plot = plt.errorbar(t, dagger_means, yerr=dagger_stds, fmt='-o', color="green", label="DAgger")
     plt.title("Mean returns of {} for {} rollouts".format(args.envname, args.num_rollouts))
-    plt.xlabel("rollouts")
+    plt.xlabel("iterations")
     plt.ylabel("return")
+    plt.legend(handles=[expert_plot, bc_plot, dagger_plot])
     plt.show()
-
-    ### plot losses ###
-    # t = np.r_[:len(losses)]
-    # plt.plot(t, losses)
-    # plt.title("losses of {} for {} rollouts".format(args.envname, args.num_rollouts))
-    # plt.xlabel("rollouts")
-    # plt.ylabel("losses")
-    # plt.show()
 
 
 if __name__ == '__main__':
