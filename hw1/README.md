@@ -16,3 +16,14 @@ In `experts/`, the provided expert policies are:
 * Walker2d-v1.pkl
 
 The name of the pickle file corresponds to the name of the gym environment.
+
+
+To run warmup:
+	python warmup.py Hopper-v1_100
+
+To run section 3.1, comment out the lines corresond to section 3.2, and vice versa:
+	python behavioral_cloning.py expert/HalfCheetah-v1.pkl HalfCheetah-v1 --num_rollouts 50
+	python behavioral_cloning.py expert/HalfCheetah-v1.pkl HalfCheetah-v1 --num_rollouts 5
+
+To run section 4.2:
+	python DAgger.py expert/Ant-v1.pkl Ant-v1 --num_rollouts 50
