@@ -26,21 +26,23 @@ def build_mlp(
     # Network building
     #
     # Your code should make a feedforward neural network (also called a multilayer perceptron)
-    # with 'n_layers' hidden layers of size 'size' units. 
-    # 
+    # with 'n_layers' hidden layers of size 'size' units.
+    #
     # The output layer should have size 'output_size' and activation 'output_activation'.
     #
     # Hint: use tf.layers.dense
     #========================================================================================#
 
     with tf.variable_scope(scope):
-        # YOUR_CODE_HERE
-        pass
+        inputs = input_placeholder
+        for _ in range(n_layers):
+            inputs = tf.layers.dense(inputs=inputs, units=size, activation=activation)
+        outputs = tf.layers.dense(inputs=inputs, units=output_size, activation=output_activation)
+    return outputs
+
 
 def pathlength(path):
     return len(path["reward"])
-
-
 
 #============================================================================================#
 # Policy Gradient
@@ -123,8 +125,7 @@ def train_PG(exp_name='',
         sy_ac_na = tf.placeholder(shape=[None, ac_dim], name="ac", dtype=tf.float32) 
 
     # Define a placeholder for advantages
-    sy_adv_n = TODO
-
+    sy_adv_n = tf.placeholder(shape=[None], name="adv", dtype=tf.float32)
 
     #========================================================================================#
     #                           ----------SECTION 4----------
@@ -166,17 +167,25 @@ def train_PG(exp_name='',
     #========================================================================================#
 
     if discrete:
-        # YOUR_CODE_HERE
-        sy_logits_na = TODO
-        sy_sampled_ac = TODO # Hint: Use the tf.multinomial op
-        sy_logprob_n = TODO
+        # Hint: use the 'build_mlp' function you defined in utilities.
+        sy_logits_na = build_mlp(sy_ob_no, ac_dim, "discrete", n_layers=n_layers, size=size)
+        # Hint: Use the tf.multinomial op.
+        sy_sampled_ac = tf.multinomial(sy_logits_na, 1)[0]
+        mask = tf.one_hot(sy_ac_na, ac_dim)
+        log_prob = tf.nn.log_softmax(sy_logits_na)
+        sy_logprob_n = tf.reduce_sum(tf.multiply(mask, log_prob), axis=1)
 
     else:
-        # YOUR_CODE_HERE
-        sy_mean = TODO
-        sy_logstd = TODO # logstd should just be a trainable variable, not a network output.
-        sy_sampled_ac = TODO
-        sy_logprob_n = TODO  # Hint: Use the log probability under a multivariate gaussian. 
+        # Hint: use the 'build_mlp' function you defined in utilities.
+        sy_mean = build_mlp(sy_ob_no, ac_dim, "continuous", n_layers=n_layers, size=size)
+        # logstd should just be a trainable variable, not a network output.
+        sy_logstd = tf.Variable(tf.zeros([ac_dim]))
+        # Hint: use tf.random_normal.
+        sy_sampled_ac = sy_mean + tf.exp(sy_logstd) * tf.random_normal([ac_dim])
+        # Hint: Use the log probability under a multivariate gaussian.
+        power = tf.divide(tf.square(sy_ac_na - sy_mean), -2*tf.square(tf.exp(sy_logstd)))
+        prob = float(1)/np.sqrt(2*np.pi) * tf.divide(tf.exp(power), tf.exp(sy_logstd))
+        sy_logprob_n = tf.reduce_sum(tf.log(prob), axis=1)
 
 
 
@@ -185,7 +194,8 @@ def train_PG(exp_name='',
     # Loss Function and Training Operation
     #========================================================================================#
 
-    loss = TODO # Loss function that we'll differentiate to get the policy gradient.
+    # Loss function that we'll differentiate to get the policy gradient.
+    loss = -tf.reduce_mean(sy_logprob_n * sy_adv_n)
     update_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
 
 
@@ -204,7 +214,9 @@ def train_PG(exp_name='',
         # Define placeholders for targets, a loss function and an update op for fitting a 
         # neural network baseline. These will be used to fit the neural network baseline. 
         # YOUR_CODE_HERE
-        baseline_update_op = TODO
+        sy_base_n = tf.placeholder(shape=[None], name="base", dtype=tf.float32)
+        bl_loss = tf.nn.l2_loss(sy_base_n - baseline_prediction)
+        baseline_update_op =  tf.train.AdamOptimizer(learning_rate).minimize(bl_loss)
 
 
     #========================================================================================#
@@ -317,7 +329,17 @@ def train_PG(exp_name='',
         #====================================================================================#
 
         # YOUR_CODE_HERE
-        q_n = TODO
+        q_n = []
+        for path in paths:
+            reward = path["reward"]
+            if not reward_to_go:
+                discounted_reward = np.sum([gamma**t*reward[t] for t in range(len(reward))]) * np.ones(len(reward))
+            else:
+                discount = np.array([gamma**t for t in range(len(reward))])
+                discounted_reward = np.array([np.dot(discount[:len(reward)-t], reward[t:]) for t in range(len(reward))])
+            q_n.append(discounted_reward)
+        q_n = np.concatenate(q_n)
+
 
         #====================================================================================#
         #                           ----------SECTION 5----------
@@ -333,7 +355,9 @@ def train_PG(exp_name='',
             # (mean and std) of the current or previous batch of Q-values. (Goes with Hint
             # #bl2 below.)
 
-            b_n = TODO
+            b_n = sess.run(baseline_prediction, feed_dict={sy_ob_no:ob_no})
+            normalized_b_n = (b_n - np.mean(b_n)) / np.std(b_n)
+            b_n = normalized_b_n * np.std(q_n) + np.mean(q_n)
             adv_n = q_n - b_n
         else:
             adv_n = q_n.copy()
@@ -347,7 +371,7 @@ def train_PG(exp_name='',
             # On the next line, implement a trick which is known empirically to reduce variance
             # in policy gradient methods: normalize adv_n to have mean zero and std=1. 
             # YOUR_CODE_HERE
-            pass
+            adv_n = (adv_n - np.mean(adv_n)) / np.std(adv_n)
 
 
         #====================================================================================#
@@ -366,7 +390,9 @@ def train_PG(exp_name='',
             # targets to have mean zero and std=1. (Goes with Hint #bl1 above.)
 
             # YOUR_CODE_HERE
-            pass
+            rescale = (q_n - np.mean(q_n)) / np.std(q_n)
+            sess.run(baseline_update_op, feed_dict={sy_base_n:rescale, sy_ob_no:ob_no})
+
 
         #====================================================================================#
         #                           ----------SECTION 4----------
@@ -380,6 +406,9 @@ def train_PG(exp_name='',
         # and after an update, and then log them below. 
 
         # YOUR_CODE_HERE
+        loss_before = sess.run(loss, feed_dict={sy_ob_no:ob_no, sy_ac_na:ac_na, sy_adv_n:adv_n})
+        sess.run(update_op, feed_dict={sy_ob_no:ob_no, sy_ac_na:ac_na, sy_adv_n:adv_n})
+        loss_after = sess.run(loss, feed_dict={sy_ob_no:ob_no, sy_ac_na:ac_na, sy_adv_n:adv_n})
 
 
         # Log diagnostics
@@ -387,6 +416,8 @@ def train_PG(exp_name='',
         ep_lengths = [pathlength(path) for path in paths]
         logz.log_tabular("Time", time.time() - start)
         logz.log_tabular("Iteration", itr)
+        logz.log_tabular("loss before update", loss_before)
+        logz.log_tabular("loss after update", loss_after)
         logz.log_tabular("AverageReturn", np.mean(returns))
         logz.log_tabular("StdReturn", np.std(returns))
         logz.log_tabular("MaxReturn", np.max(returns))
@@ -454,7 +485,25 @@ def main():
         p = Process(target=train_func, args=tuple())
         p.start()
         p.join()
-        
+
+
+        # exp_name='',
+        # env_name='CartPole-v0',
+        # n_iter=100, 
+        # gamma=1.0, 
+        # min_timesteps_per_batch=1000, 
+        # max_path_length=None,
+        # learning_rate=5e-3, 
+        # reward_to_go=True, 
+        # animate=True, 
+        # logdir=None, 
+        # normalize_advantages=True,
+        # nn_baseline=False, 
+        # seed=0,
+        # # network arguments
+        # n_layers=1,
+        # size=32
+
 
 if __name__ == "__main__":
     main()
