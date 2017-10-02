@@ -1,10 +1,6 @@
 #!/bin/bash
 set -eux
 
-# Simon
-# python train_pg.py HalfCheetah-v1 -ep 150 --discount 0.95 -rtg -lr 0.03 -n 100 -b 50000 -bl -l 3 -s 32
-
-
 # avg 80
 # python train_pg.py HalfCheetah-v1 -ep 150 -n 100 -b 50000 -rtg --discount 0.95 -bl -lr 0.02 -s 64 -l 2
 
