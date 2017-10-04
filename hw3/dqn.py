@@ -9,6 +9,7 @@ from collections import namedtuple
 from dqn_utils import *
 import pickle
 import matplotlib.pyplot as plt
+import os
 
 OptimizerSpec = namedtuple("OptimizerSpec", ["constructor", "kwargs", "lr_schedule"])
 
@@ -329,13 +330,10 @@ def learn(env,
             print("learning_rate %f" % optimizer_spec.lr_schedule.value(t))
             sys.stdout.flush()
 
-    saved_rewards = {"time": time_steps, "mean epr": mean_epr, "best epr": best_epr}
-    with open("saved_rewards/{}_{}.pkl".format(batch_size, gamma), "wb") as output_file:
+    saved_rewards = {"time": time_steps, "mean": mean_epr, "best": best_epr}
+    save_dir = os.path.join(os.getcwd(), "saved_rewards")
+    if not os.path.isdir(save_dir):
+        os.mkdir(save_dir)
+    with open("saved_rewards/batch{}.pkl".format(batch_size), "wb") as output_file:
         pickle.dump(saved_rewards, output_file)
 
-    mean, = plt.plot(time_steps, mean_epr, label="mean episode rewards")
-    best, = plt.plot(time_steps, best_epr, label="best episode rewards")
-    plt.xlabel("time step")
-    plt.ylabel("episode reward")
-    plt.legend(handles=[mean, best])
-    plt.show()
