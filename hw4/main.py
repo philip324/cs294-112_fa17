@@ -65,7 +65,7 @@ def preprocess(data):
         actions.append(data[i]['actions'])
         next_observations.append(data[i]['next_observations'])
         rewards.append(data[i]['rewards'])
-        returns.append(data[i]['returns'])
+        returns.append(data[i]['returns'][-1])
 
     ob_dim = observations[0].shape[-1]
     ac_dim = actions[0].shape[-1]
