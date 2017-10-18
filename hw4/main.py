@@ -18,54 +18,118 @@ def sample(env,
            render=False,
            verbose=False):
     """
-        Write a sampler function which takes in an environment, a controller (either random or the MPC controller), 
-        and returns rollouts by running on the env. 
+        Write a sampler function which takes in an environment, a controller 
+        (either random or the MPC controller), and returns rollouts by running on the env. 
         Each path can have elements for observations, next_observations, rewards, returns, actions, etc.
     """
     paths = []
     """ YOUR CODE HERE """
+    for i in range(num_paths):
+        obs = env.reset()
+        observations = []
+        next_observations = []
+        rewards = []
+        returns = []
+        actions = []
+        ret = 0
+        for j in range(horizon):
+            # start_time = time.time()
+            if j % 100 == 0: print("sample iter {}".format(j))
+            action = controller.get_action(obs)
+            # if j == 10: print("duration {}".format(time.time() - start_time))
+            observations.append(obs)
+            actions.append(action)
 
+            obs, reward, done, _ = env.step(action)
+            next_observations.append(obs)
+            rewards.append(reward)
+            ret += reward
+            returns.append(ret)
+        path = {'observations':np.array(observations),
+                'actions':np.array(actions), 
+                'next_observations':np.array(next_observations), 
+                'rewards':np.array(rewards),
+                'returns':np.array(returns)}
+        paths.append(path)
     return paths
 
 # Utility to compute cost a path for a given cost function
 def path_cost(cost_fn, path):
     return trajectory_cost_fn(cost_fn, path['observations'], path['actions'], path['next_observations'])
 
+
+def preprocess(data):
+    observations, actions, next_observations, rewards, returns = [], [], [], [], []
+    for i in range(len(data)):
+        observations.append(data[i]['observations'])
+        actions.append(data[i]['actions'])
+        next_observations.append(data[i]['next_observations'])
+        rewards.append(data[i]['rewards'])
+        returns.append(data[i]['returns'])
+
+    ob_dim = observations[0].shape[-1]
+    ac_dim = actions[0].shape[-1]
+
+    observations = np.array(observations).reshape((-1, ob_dim))
+    actions = np.array(actions).reshape((-1, ac_dim))
+    next_observations = np.array(next_observations).reshape((-1, ob_dim))
+    rewards = np.array(rewards).flatten()
+    returns = np.array(returns).flatten()
+
+    return [observations, actions, next_observations, rewards, returns]
+
+
 def compute_normalization(data):
     """
     Write a function to take in a dataset and compute the means, and stds.
-    Return 6 elements: mean of s_t, std of s_t, mean of (s_t+1 - s_t), std of (s_t+1 - s_t), mean of actions, std of actions
+    Return 6 elements: 
+            mean of s_t,            std of s_t, 
+            mean of (s_t+1 - s_t),  std of (s_t+1 - s_t),
+            mean of actions,        std of actions
     """
-
     """ YOUR CODE HERE """
-    return mean_obs, std_obs, mean_deltas, std_deltas, mean_action, std_action
+    dataset = preprocess(data)
+    observations = dataset[0]
+    deltas = dataset[2] - dataset[0]
+    actions = dataset[1]
+
+    mean_obs = np.mean(observations, axis=0, dtype=np.float32)
+    std_obs  = np.std(observations, axis=0, dtype=np.float32)
+    mean_deltas = np.mean(deltas, axis=0, dtype=np.float32)
+    std_deltas  = np.std(deltas, axis=0, dtype=np.float32)
+    mean_action = np.mean(actions, axis=0, dtype=np.float32)
+    std_action  = np.std(actions, axis=0, dtype=np.float32)
+
+    return np.array([mean_obs, std_obs, mean_deltas, std_deltas, mean_action, std_action])
 
 
 def plot_comparison(env, dyn_model):
     """
-    Write a function to generate plots comparing the behavior of the model predictions for each element of the state to the actual ground truth, using randomly sampled actions. 
+    Write a function to generate plots comparing the behavior of the model predictions
+    for each element of the state to the actual ground truth, using randomly sampled actions. 
     """
     """ YOUR CODE HERE """
     pass
 
+
 def train(env, 
-         cost_fn,
-         logdir=None,
-         render=False,
-         learning_rate=1e-3,
-         onpol_iters=10,
-         dynamics_iters=60,
-         batch_size=512,
-         num_paths_random=10, 
-         num_paths_onpol=10, 
-         num_simulated_paths=10000,
-         env_horizon=1000, 
-         mpc_horizon=15,
-         n_layers=2,
-         size=500,
-         activation=tf.nn.relu,
-         output_activation=None
-         ):
+          cost_fn,
+          logdir=None,
+          render=False,
+          learning_rate=1e-3,
+          onpol_iters=10,
+          dynamics_iters=60,
+          batch_size=512,
+          num_paths_random=10, 
+          num_paths_onpol=10, 
+          num_simulated_paths=10000,
+          env_horizon=1000, 
+          mpc_horizon=15,
+          n_layers=2,
+          size=500,
+          activation=tf.nn.relu,
+          output_activation=None
+          ):
 
     """
 
@@ -112,7 +176,7 @@ def train(env,
     random_controller = RandomController(env)
 
     """ YOUR CODE HERE """
-
+    random_data = sample(env, random_controller, num_paths=num_paths_random, horizon=env_horizon)
 
     #========================================================
     # 
@@ -122,7 +186,8 @@ def train(env,
     # for normalizing inputs and denormalizing outputs
     # from the dynamics network. 
     # 
-    normalization = """ YOUR CODE HERE """
+    """ YOUR CODE HERE """
+    normalization = compute_normalization(random_data)
 
 
     #========================================================
@@ -158,13 +223,47 @@ def train(env,
 
     #========================================================
     # 
-    # Take multiple iterations of onpolicy aggregation at each iteration refitting the dynamics model to current dataset and then taking onpolicy samples and aggregating to the dataset. 
-    # Note: You don't need to use a mixing ratio in this assignment for new and old data as described in https://arxiv.org/abs/1708.02596
+    # Take multiple iterations of onpolicy aggregation at each iteration refitting the dynamics model
+    # to current dataset and then taking onpolicy samples and aggregating to the dataset. 
+    #
+    # Note: You don't need to use a mixing ratio in this assignment for new and old data
+    # as described in https://arxiv.org/abs/1708.02596
     # 
+    dataset = preprocess(random_data)
+
+    # loss = dyn_model.fit(dataset)
+    # costs = [path_cost(cheetah_cost_fn, path) for path in random_data]
+    # returns = dataset[-1]
+    # # LOGGING
+    # # Statistics for performance of MPC policy using
+    # # our learned dynamics model
+    # # logz.log_tabular('Iteration', itr)
+    # # In terms of cost function which your MPC controller uses to plan
+    # logz.log_tabular('AverageCost', np.mean(costs))
+    # logz.log_tabular('StdCost', np.std(costs))
+    # logz.log_tabular('MinimumCost', np.min(costs))
+    # logz.log_tabular('MaximumCost', np.max(costs))
+    # # In terms of true environment reward of your rolled out trajectory using the MPC controller
+    # logz.log_tabular('AverageReturn', np.mean(returns))
+    # logz.log_tabular('StdReturn', np.std(returns))
+    # logz.log_tabular('MinimumReturn', np.min(returns))
+    # logz.log_tabular('MaximumReturn', np.max(returns))
+    # logz.dump_tabular()
+
     for itr in range(onpol_iters):
+        print("on policy iter {}".format(itr))
         """ YOUR CODE HERE """
+        # fit dynamics model
+        loss = dyn_model.fit(dataset)
+        # take onpolicy samples
+        mpc_data = sample(env, mpc_controller, num_paths=num_paths_onpol, horizon=env_horizon)
+        rl_dataset = preprocess(mpc_data)
+        # aggregate data
+        dataset = [np.hstack((dataset[i].T, rl_dataset[i].T)).T for i in range(len(dataset))]
 
-
+        # calculate costs and returns
+        costs = [path_cost(cheetah_cost_fn, path) for path in mpc_data]
+        returns = rl_dataset[-1]
 
         # LOGGING
         # Statistics for performance of MPC policy using
@@ -226,23 +325,23 @@ def main():
         env = HalfCheetahEnvNew()
         cost_fn = cheetah_cost_fn
     train(env=env, 
-                 cost_fn=cost_fn,
-                 logdir=logdir,
-                 render=args.render,
-                 learning_rate=args.learning_rate,
-                 onpol_iters=args.onpol_iters,
-                 dynamics_iters=args.dyn_iters,
-                 batch_size=args.batch_size,
-                 num_paths_random=args.random_paths, 
-                 num_paths_onpol=args.onpol_paths, 
-                 num_simulated_paths=args.simulated_paths,
-                 env_horizon=args.ep_len, 
-                 mpc_horizon=args.mpc_horizon,
-                 n_layers = args.n_layers,
-                 size=args.size,
-                 activation=tf.nn.relu,
-                 output_activation=None,
-                 )
+          cost_fn=cost_fn,
+          logdir=logdir,
+          render=args.render,
+          learning_rate=args.learning_rate,
+          onpol_iters=args.onpol_iters,
+          dynamics_iters=args.dyn_iters,
+          batch_size=args.batch_size,
+          num_paths_random=args.random_paths, 
+          num_paths_onpol=args.onpol_paths, 
+          num_simulated_paths=args.simulated_paths,
+          env_horizon=args.ep_len, 
+          mpc_horizon=args.mpc_horizon,
+          n_layers = args.n_layers,
+          size=args.size,
+          activation=tf.nn.relu,
+          output_activation=None,
+          )
 
 if __name__ == "__main__":
     main()
