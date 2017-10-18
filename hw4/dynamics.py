@@ -76,9 +76,19 @@ class NNDynamicsModel():
         num_data = observations.shape[0]
         losses = []
 
+        def randomize_data(obs, act, next_obs):
+            import random
+            index = list(range(len(obs)))
+            random.shuffle(index)
+            obs = obs[index]
+            act = act[index]
+            next_obs = next_obs[index]
+            return obs, act, next_obs
+
         for itr in range(self.iterations):
             i = 0
             if itr % 10 == 0: print("dynamics iter {}".format(itr))
+            observations, actions, next_observations = randomize_data(observations, actions, next_observations)
             while i+self.batch_size <= num_data:
                 batched_obs = observations[i:i+self.batch_size]
                 batched_act = actions[i:i+self.batch_size]
