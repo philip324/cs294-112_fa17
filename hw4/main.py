@@ -128,7 +128,8 @@ def train(env,
           n_layers=2,
           size=500,
           activation=tf.nn.relu,
-          output_activation=None
+          output_activation=None,
+          dic=None
           ):
 
     """
@@ -166,6 +167,7 @@ def train(env,
     """
 
     logz.configure_output_dir(logdir)
+    logz.save_params(dic.__dict__)
 
     #========================================================
     # 
@@ -256,7 +258,7 @@ def train(env,
         # fit dynamics model
         loss = dyn_model.fit(dataset)
         # take onpolicy samples
-        mpc_data = sample(env, mpc_controller, num_paths=num_paths_onpol, horizon=env_horizon)
+        mpc_data = sample(env, mpc_controller, num_paths=num_paths_onpol, horizon=mpc_horizon)
         rl_dataset = preprocess(mpc_data)
         # aggregate data
         dataset = [np.hstack((dataset[i].T, rl_dataset[i].T)).T for i in range(len(dataset))]
@@ -341,6 +343,7 @@ def main():
           size=args.size,
           activation=tf.nn.relu,
           output_activation=None,
+          dic=args
           )
 
 if __name__ == "__main__":
