@@ -258,7 +258,7 @@ def train(env,
         # fit dynamics model
         loss = dyn_model.fit(dataset)
         # take onpolicy samples
-        mpc_data = sample(env, mpc_controller, num_paths=num_paths_onpol, horizon=mpc_horizon)
+        mpc_data = sample(env, mpc_controller, num_paths=num_paths_onpol, horizon=env_horizon)
         rl_dataset = preprocess(mpc_data)
         # aggregate data
         dataset = [np.hstack((dataset[i].T, rl_dataset[i].T)).T for i in range(len(dataset))]
