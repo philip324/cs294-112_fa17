@@ -262,7 +262,7 @@ def train(env,
         dataset = [np.hstack((dataset[i].T, rl_dataset[i].T)).T for i in range(len(dataset))]
 
         # calculate costs and returns
-        costs = [path_cost(cheetah_cost_fn, path) for path in mpc_data]
+        costs = [path_cost(cost_fn, path) for path in mpc_data]
         returns = rl_dataset[-1]
 
         # LOGGING
